@@ -1,4 +1,6 @@
 test:
+	ddev exec bin/console doctrine:database:create --if-not-exists --env=test
+	ddev exec bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration --env=test
 	ddev exec bin/phpunit
 
 stan:
