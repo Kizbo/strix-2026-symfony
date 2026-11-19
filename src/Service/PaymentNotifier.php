@@ -49,28 +49,13 @@ final readonly class PaymentNotifier
             'event' => $event->getEventType(),
             'livemode' => $payload['livemode'] ?? null,
             'transaction_id' => $event->getTransactionId(),
-            'order_id' => self::at($payload, 'data', 'metadata', 'order_id'),
+            'order_id' => $payload['data']['metadata']['order_id'] ?? null,
             'amount' => [
-                'value' => self::at($payload, 'data', 'transaction', 'amount', 'value'),
-                'currency' => self::at($payload, 'data', 'transaction', 'amount', 'currency'),
+                'value' => $payload['data']['transaction']['amount']['value'] ?? null,
+                'currency' => $payload['data']['transaction']['amount']['currency'] ?? null,
             ],
-            'customer_company' => self::at($payload, 'data', 'customer', 'billing_address', 'company'),
+            'customer_company' => $payload['data']['customer']['billing_address']['company'] ?? null,
             'received_at' => $event->getReceivedAt()->format(\DATE_ATOM),
         ];
-    }
-
-    /**
-     * @param array<mixed> $data
-     */
-    private static function at(array $data, string ...$path): mixed
-    {
-        foreach ($path as $key) {
-            if (!\is_array($data) || !\array_key_exists($key, $data)) {
-                return null;
-            }
-            $data = $data[$key];
-        }
-
-        return $data;
     }
 }

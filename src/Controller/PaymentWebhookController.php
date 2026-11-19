@@ -31,8 +31,9 @@ final class PaymentWebhookController extends AbstractController
         /** @var array<string, mixed> $payload */
         $payload = $request->toArray();
 
-        $this->ingestor->ingest($input->eventId(), (string) $input->event, $input->transactionId(), $payload);
+        $eventId = (string) $input->event_id;
+        $this->ingestor->ingest($eventId, (string) $input->event, (string) $input->data?->transaction?->id, $payload);
 
-        return $this->json(new PaymentWebhookAccepted($input->eventId()), Response::HTTP_ACCEPTED);
+        return $this->json(new PaymentWebhookAccepted($eventId), Response::HTTP_ACCEPTED);
     }
 }

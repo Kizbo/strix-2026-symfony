@@ -28,14 +28,4 @@ final class PaymentWebhookInput
     #[Assert\NotNull]
     #[Assert\Valid]
     public ?PaymentWebhookData $data = null;
-
-    public function eventId(): string
-    {
-        return (string) $this->event_id;
-    }
-
-    public function transactionId(): string
-    {
-        return (string) $this->data?->transaction?->id;
-    }
 }
