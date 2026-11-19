@@ -56,3 +56,47 @@ Runs each rule from the spec (R1–R7) with curl and psql, including retries, th
 ## Development
 
 DDEV: `make qa` runs php-cs-fixer, PHPStan and PHPUnit.
+
+## Project notes
+
+### Run locally (DDEV)
+
+```bash
+ddev start && ddev composer install
+ddev exec bin/console doctrine:migrations:migrate -n
+ddev exec bin/console messenger:consume async -vv   # worker
+make qa                                           # cs-fixer, PHPStan level 8, PHPUnit
+```
+
+Env vars (`.env`, override in `.env.local`): `DATABASE_URL`, `MESSENGER_TRANSPORT_DSN` (Doctrine, `check_delayed_interval=0`), `WEBHOOK_SECRET`, `NOTIFIER_URL`, `APP_SECRET`.
+
+### Endpoints
+
+| Endpoint | Example |
+|---|---|
+| `POST /api/v1/webhooks/payment` | `curl -X POST https://strix.ddev.site/api/v1/webhooks/payment -H 'Content-Type: application/json' -H "X-Webhook-Signature: $(bin/sign-webhook tests/Fixtures/charge-successful.json change_me)" --data-binary @tests/Fixtures/charge-successful.json` |
+
+### Key decisions and assumptions
+
+- Queue in PostgreSQL (Symfony Messenger, Doctrine transport) instead of a broker: insert and queued message commit atomically, less infrastructure. Swapping to RabbitMQ is a config change.
+- `event_id` is the primary key; idempotency is enforced by the database, not by a read-then-write check.
+- The worker polls the queue table on every fetch (`check_delayed_interval=0`) instead of PostgreSQL `LISTEN/NOTIFY`, which needs a trigger and otherwise delays pick-up of new and retried messages by up to 60 s.
+- Assumed (INVENTED until the provider confirms): signature header and scheme, `payment_intent.created` payload and its link to the charge through `data.transaction.id`, notifier payload.
+- One worker process. Parking and release are not safe with several workers without a per-transaction lock.
+- Notifier `408`/`429` are retried like `5xx`.
+
+### Not done
+
+- Real notification channel (only the mock notifier), 5 channels, AI reports, message broker.
+- Admin UI for the DLQ (CLI only), data retention / GDPR job, multiple workers.
+- A charge whose intent never arrives stays `parked`; there is no alert or timeout for it.
+
+### How it would grow
+
+- **Scale:** RabbitMQ transport and several workers with `pg_advisory_xact_lock` per transaction id; partition `payment_event` by month.
+- **Failures:** alert on DLQ size and on charges parked longer than N minutes; scheduled `messenger:failed:retry` for transient outages.
+- **Monitoring:** structured JSON logs (Monolog), metrics for ingest rate, notify latency, retries and DLQ size; health endpoint per service.
+
+### Rough estimate for the full version
+
+About 95 h (±30%): provider-specific signatures for 3 providers 15 h, 5 notification channels 40 h, broker and multi-worker locking 10 h, DLQ admin UI 8 h, retention/GDPR job 4 h, monitoring and alerts 8 h, CI/CD and production deploy 10 h. AI reports add 24–40 h once their questions are defined.
