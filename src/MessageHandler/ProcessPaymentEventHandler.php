@@ -60,13 +60,16 @@ final readonly class ProcessPaymentEventHandler
         $parked = $this->entityManager->getRepository(PaymentEvent::class)
             ->findBy(['transactionId' => $transactionId, 'status' => PaymentEventStatus::Parked], ['receivedAt' => 'ASC']);
 
-        foreach ($parked as $charge) {
-            $charge->release();
-        }
-        $this->entityManager->flush();
+        // The Doctrine transport shares the connection, so status change and queued messages commit together.
+        $this->entityManager->wrapInTransaction(function () use ($parked): void {
+            foreach ($parked as $charge) {
+                $charge->release();
+            }
+            $this->entityManager->flush();
 
-        foreach ($parked as $charge) {
-            $this->bus->dispatch(new ProcessPaymentEvent($charge->getEventId()));
-        }
+            foreach ($parked as $charge) {
+                $this->bus->dispatch(new ProcessPaymentEvent($charge->getEventId()));
+            }
+        });
     }
 }

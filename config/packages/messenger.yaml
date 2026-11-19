@@ -10,7 +10,7 @@ framework:
                     delay: 1000
                     multiplier: 2
                     jitter: 0.1
-            failed: 'doctrine://default?queue_name=failed&auto_setup=0'
+            failed: 'doctrine://default?queue_name=failed&auto_setup=0&check_delayed_interval=0'
 
         routing:
             'App\Message\ProcessPaymentEvent': async
@@ -20,5 +20,5 @@ when@test:
         messenger:
             transports:
                 async:
-                    dsn: 'in-memory://'
-                failed: 'in-memory://'
+                    dsn: 'in-memory://?serialize=true'
+                failed: 'in-memory://?serialize=true'
