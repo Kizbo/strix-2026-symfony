@@ -1,0 +1,9 @@
+.git
+.ddev
+.idea
+.lite
+.claude
+var
+vendor
+.phpunit.cache
+.php-cs-fixer.cache
