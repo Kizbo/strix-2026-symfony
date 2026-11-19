@@ -1,0 +1,12 @@
+framework:
+    http_client:
+        scoped_clients:
+            notifier.client:
+                base_uri: '%env(NOTIFIER_URL)%'
+                timeout: 5
+                max_duration: 5
+
+when@test:
+    framework:
+        http_client:
+            mock_response_factory: App\Tests\Support\NotifierStub

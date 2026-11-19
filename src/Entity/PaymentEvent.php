@@ -11,6 +11,8 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(name: 'idx_payment_event_transaction_id', columns: ['transaction_id'])]
 class PaymentEvent
 {
+    public const string INTENT_EVENT = 'payment_intent.created';
+
     /**
      * @param array<string, mixed> $payload
      */
@@ -62,5 +64,35 @@ class PaymentEvent
     public function getReceivedAt(): \DateTimeImmutable
     {
         return $this->receivedAt;
+    }
+
+    public function isCharge(): bool
+    {
+        return str_starts_with($this->eventType, 'charge.');
+    }
+
+    public function isIntent(): bool
+    {
+        return self::INTENT_EVENT === $this->eventType;
+    }
+
+    public function isNotified(): bool
+    {
+        return PaymentEventStatus::Notified === $this->status;
+    }
+
+    public function park(): void
+    {
+        $this->status = PaymentEventStatus::Parked;
+    }
+
+    public function release(): void
+    {
+        $this->status = PaymentEventStatus::Received;
+    }
+
+    public function markNotified(): void
+    {
+        $this->status = PaymentEventStatus::Notified;
     }
 }

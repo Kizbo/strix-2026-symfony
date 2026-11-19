@@ -7,4 +7,6 @@ namespace App\Entity;
 enum PaymentEventStatus: string
 {
     case Received = 'received';
+    case Parked = 'parked';
+    case Notified = 'notified';
 }

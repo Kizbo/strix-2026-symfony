@@ -30,3 +30,6 @@ when@test:
             arguments: ['@?clock']
             autoconfigure: false
             tags: ['messenger.transport_factory']
+
+        App\Tests\Support\NotifierStub:
+            public: true
