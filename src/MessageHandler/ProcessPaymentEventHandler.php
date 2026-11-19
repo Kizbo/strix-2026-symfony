@@ -29,7 +29,15 @@ final readonly class ProcessPaymentEventHandler
     public function __invoke(ProcessPaymentEvent $message): void
     {
         $event = $this->entityManager->find(PaymentEvent::class, $message->eventId);
-        if (null === $event || $event->isNotified()) {
+        if (null === $event) {
+            return;
+        }
+        if ($event->isNotified()) {
+            // A retry after the release was interrupted; releasing again is idempotent (only parked rows).
+            if ($event->isIntent()) {
+                $this->releaseParkedCharges($event->getTransactionId());
+            }
+
             return;
         }
 
