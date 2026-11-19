@@ -24,6 +24,9 @@ services:
 
 when@test:
     services:
-        App\Service\WebhookIngestor:
-            autowire: true
-            public: true
+        # Without kernel.reset, so messages sent by earlier requests of one test client stay inspectable.
+        messenger.transport.in_memory.factory:
+            class: Symfony\Component\Messenger\Transport\InMemory\InMemoryTransportFactory
+            arguments: ['@?clock']
+            autoconfigure: false
+            tags: ['messenger.transport_factory']
