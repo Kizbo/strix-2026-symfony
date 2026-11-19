@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Usage: bin/lite-time [budget-minutes=60]
+# Elapsed time since the first /lite:clarify, per command, and against the budget. bash 3.2 compatible.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+budget="${1:-60}"
+[[ -s "$root/.lite/events" ]] || { echo "No timing yet — starts with /lite:clarify."; exit 0; }
+python3 - "$root/.lite/events" "$budget" <<'PY'
+import datetime as dt, sys
+path, budget = sys.argv[1], int(sys.argv[2])
+rows = [line.split(" ", 2) for line in open(path) if line.strip()]
+parse = lambda s: dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
+start = next((parse(r[0]) for r in rows if len(r) > 2 and r[2].strip() == "/lite:clarify"), parse(rows[0][0]))
+now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+phases, current, messages = [], None, {}
+for r in rows:
+    t = parse(r[0])
+    if t < start:
+        continue
+    if r[1] == "command":
+        current = r[2].strip()
+        phases.append([current, t])
+        messages[len(phases) - 1] = 0
+    elif phases:
+        messages[len(phases) - 1] += 1
+print("| Step | Started | Minutes | Your messages |")
+print("|---|---|---|---|")
+for i, (name, t) in enumerate(phases):
+    end = phases[i + 1][1] if i + 1 < len(phases) else now
+    local = t.replace(tzinfo=dt.timezone.utc).astimezone()
+    print(f"| {name} | {local:%H:%M} | {int((end - t).total_seconds() // 60)} | {messages.get(i, 0)} |")
+used = int((now - start).total_seconds() // 60)
+print(f"\nElapsed {used} min of {budget}" + (" — OVER BUDGET: cut scope now" if used > budget else f" — {budget - used} min left"))
+PY

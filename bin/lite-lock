@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Usage: bin/lite-lock add <test-file>... | clear
+# Records test files whose RED was verified; protect-tests.sh then refuses edits to them. bash 3.2 compatible.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$root/.lite"
+case "${1:-}" in
+  add) shift; for f in "$@"; do grep -qxF "$f" "$root/.lite/locked" 2>/dev/null || echo "$f" >> "$root/.lite/locked"; done; echo "locked: $*" ;;
+  clear) : > "$root/.lite/locked"; echo "locks cleared" ;;
+  *) echo "Usage: bin/lite-lock add <files>... | clear" >&2; exit 1 ;;
+esac
