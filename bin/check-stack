@@ -5,7 +5,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-URL="${BASE_URL:-http://localhost:${HTTP_PORT:-8080}}/api/v1/webhooks/payment"
+PORT="${HTTP_PORT:-$(docker compose port nginx 80 2>/dev/null | awk -F: '{print $NF}')}"
+[[ -n "$PORT" ]] || { echo "Stack is not running: start it with docker compose up" >&2; exit 1; }
+URL="${BASE_URL:-http://localhost:$PORT}/api/v1/webhooks/payment"
 SECRET="${WEBHOOK_SECRET:-change_me}"
 RUN="$(date +%s)"
 TMP="$(mktemp -d)"

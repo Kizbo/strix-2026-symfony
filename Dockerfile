@@ -1,9 +1,9 @@
-FROM composer:2 AS vendor
+FROM composer:2.10.3@sha256:2cf275428757e5435a667bfc0d038b14520ca02be2b1b70d44a05c8c19e2de48 AS vendor
 WORKDIR /app
 COPY composer.json composer.lock symfony.lock ./
 RUN composer install --no-dev --no-scripts --no-autoloader --no-interaction --prefer-dist
 
-FROM php:8.4-fpm-alpine
+FROM php:8.4.27-fpm-alpine@sha256:511af6fa3ef55c4ea0c68bb47096ba4b81771ab4949bde7813807bf177efda11
 RUN apk add --no-cache libpq \
     && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS postgresql-dev \
     && docker-php-ext-install pdo_pgsql opcache \

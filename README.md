@@ -8,7 +8,7 @@ Receives payment webhooks on `POST /api/v1/webhooks/payment`, stores each event 
 docker compose up -d --build --wait
 ```
 
-Services: `nginx` (port `8080`, `HTTP_PORT` to change), `app` (php-fpm), `worker` (`messenger:consume async`), `db` (PostgreSQL 16), `migrate` (runs migrations, then exits), `notifier` (mock notifier API).
+Services: `nginx` (first free host port from `8080`–`8099`; `docker compose port nginx 80` shows it, `HTTP_PORT` forces one), `app` (php-fpm), `worker` (`messenger:consume async`), `db` (PostgreSQL 16), `migrate` (runs migrations, then exits), `notifier` (mock notifier API).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -26,6 +26,8 @@ curl -i -X POST http://localhost:8080/api/v1/webhooks/payment \
   -H "X-Webhook-Signature: $(bin/sign-webhook $F change_me)" \
   --data-binary @$F
 ```
+
+Replace `8080` with the port from `docker compose port nginx 80` if it was taken.
 
 `202 {"event_id":"..."}` for new and duplicate events. Errors are `application/problem+json`: `401` bad or missing signature, `400` malformed JSON, `415` not JSON, `422` invalid fields (`violations[].propertyPath`).
 
@@ -48,12 +50,14 @@ The charge above waits until its intent arrives: send `tests/Fixtures/payment-in
 ## Check every example
 
 ```bash
-bin/check-stack   # needs the stack running, jq and openssl; about a minute
+bin/check-stack   # needs the stack running, jq and openssl; finds the nginx port itself; about a minute
 ```
 
 Runs each rule from the spec (R1–R7) with curl and psql, including retries, the DLQ and `messenger:failed:retry`. It recreates the `notifier` container to force failures.
 
 ## Development
+
+All base images are pinned to exact versions and digests (`Dockerfile`, `docker-compose.yml`).
 
 DDEV: `make qa` runs php-cs-fixer, PHPStan and PHPUnit.
 
