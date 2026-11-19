@@ -63,6 +63,7 @@ services:
     command: ["php", "-S", "0.0.0.0:8080", "/srv/server.php"]
     environment:
       MOCK_FAILURE_RATE: ${MOCK_FAILURE_RATE:-0.3}
+      MOCK_FAILURE_STATUS: ${MOCK_FAILURE_STATUS:-503}
     volumes:
       - ./docker/notifier/server.php:/srv/server.php:ro
     healthcheck:

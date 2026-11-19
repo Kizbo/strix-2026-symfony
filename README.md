@@ -13,7 +13,8 @@ Services: `nginx` (port `8080`, `HTTP_PORT` to change), `app` (php-fpm), `worker
 | Variable | Default | Meaning |
 |---|---|---|
 | `WEBHOOK_SECRET` | `change_me` | HMAC secret shared with the payment provider |
-| `MOCK_FAILURE_RATE` | `0.3` | Share of notifier requests answered with `503` (`0`–`1`) |
+| `MOCK_FAILURE_RATE` | `0.3` | Share of notifier requests that fail (`0`–`1`) |
+| `MOCK_FAILURE_STATUS` | `503` | HTTP status the mock notifier fails with |
 | `APP_SECRET` | `change_me_in_production` | Symfony secret |
 
 ## Send a webhook
@@ -43,6 +44,14 @@ The charge above waits until its intent arrives: send `tests/Fixtures/payment-in
   An event already `notified` is skipped, so a retry never sends a second notification.
 - **Poison pills:** invalid payloads are rejected at the HTTP layer (`400`/`415`/`422`), logged as warnings without the raw body, and never stored or queued.
 - **Personal data:** customer e-mail and name are stored with the event but not sent to the notifier.
+
+## Check every example
+
+```bash
+bin/check-stack   # needs the stack running, jq and openssl; about a minute
+```
+
+Runs each rule from the spec (R1–R7) with curl and psql, including retries, the DLQ and `messenger:failed:retry`. It recreates the `notifier` container to force failures.
 
 ## Development
 

@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Usage: bin/check-stack
+# Runs every STRIX-1 example against the running `docker compose` stack (curl + psql) and prints PASS/FAIL.
+# Recreates the notifier container to force failures; takes about a minute because of the retry backoff.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+URL="${BASE_URL:-http://localhost:${HTTP_PORT:-8080}}/api/v1/webhooks/payment"
+SECRET="${WEBHOOK_SECRET:-change_me}"
+RUN="$(date +%s)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+fails=0
+
+pass() { echo "PASS $1"; }
+fail() { echo "FAIL $1"; fails=$((fails + 1)); }
+expect() { if [[ "$2" == "$3" ]]; then pass "$1"; else fail "$1 (expected '$3', got '$2')"; fi; }
+expect_contains() { if [[ "$2" == *"$3"* ]]; then pass "$1"; else fail "$1 (missing '$3' in '$2')"; fi; }
+
+sql() { docker compose exec -T db psql -U app -d app -tAc "$1"; }
+status() { sql "SELECT status FROM payment_event WHERE event_id = '$1'"; }
+rows() { sql "SELECT COUNT(*) FROM payment_event WHERE event_id = '$1'"; }
+attempts() { docker compose logs notifier 2>/dev/null | grep -c "\"event_id\":\"$1\""; }
+wait_status() { # event_id expected seconds
+  for _ in $(seq "$3"); do [[ "$(status "$1")" == "$2" ]] && break; sleep 1; done
+  status "$1"
+}
+notifier() { # failure-rate failure-status
+  MOCK_FAILURE_RATE="$1" MOCK_FAILURE_STATUS="$2" docker compose up -d --wait notifier >/dev/null 2>&1
+}
+
+# body: fixture event_id transaction_id [jq filter] -> file path
+body() {
+  local file="$TMP/$2.json"
+  jq -cj --arg id "$2" --arg txn "$3" ".event_id = \$id | .data.transaction.id = \$txn | ${4:-.}" "tests/Fixtures/$1" > "$file"
+  echo "$file"
+}
+# post: file [signature|none] [content-type] -> sets CODE, BODY, CTYPE
+post() {
+  local sig="${2:-}"
+  [[ -z "$sig" ]] && sig="$(bin/sign-webhook "$1" "$SECRET")"
+  local headers=(-H "Content-Type: ${3:-application/json}")
+  [[ "$sig" != none ]] && headers+=(-H "X-Webhook-Signature: $sig")
+  CODE="$(curl -s -o "$TMP/response" -D "$TMP/headers" -w '%{http_code}' -X POST "$URL" "${headers[@]}" --data-binary "@$1")"
+  BODY="$(cat "$TMP/response")"
+  CTYPE="$(grep -i '^content-type:' "$TMP/headers" | tr -d '\r' | cut -d' ' -f2)"
+}
+
+notifier 0 503
+
+echo "== R1 real sample accepted"
+id="evt_${RUN}_r1"; f="$(body charge-successful.json "$id" "txn_${RUN}_1")"
+post "$f"
+expect "R1 status" "$CODE" 202
+expect "R1 body" "$BODY" "{\"event_id\":\"$id\"}"
+expect "R1 one row" "$(rows "$id")" 1
+
+echo "== R2 duplicates"
+post "$f"
+expect "R2 duplicate status" "$CODE" 202
+expect "R2 duplicate body" "$BODY" "{\"event_id\":\"$id\"}"
+expect "R2 still one row" "$(rows "$id")" 1
+id="evt_${RUN}_r2"; f="$(body charge-successful.json "$id" "txn_${RUN}_2")"; sig="$(bin/sign-webhook "$f" "$SECRET")"
+codes="$( (curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" -H 'Content-Type: application/json' -H "X-Webhook-Signature: $sig" --data-binary "@$f" &
+           curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL" -H 'Content-Type: application/json' -H "X-Webhook-Signature: $sig" --data-binary "@$f" &
+           wait) | sort | tr '\n' ' ')"
+expect "R2 concurrent both 202" "$codes" "202 202 "
+expect "R2 concurrent one row" "$(rows "$id")" 1
+
+echo "== R3 signature"
+id="evt_${RUN}_r3"; f="$(body charge-successful.json "$id" "txn_${RUN}_3")"
+post "$f" none
+expect "R3 missing header" "$CODE" 401
+expect "R3 problem+json" "$CTYPE" application/problem+json
+post "$f" "$(printf '{}' | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')"
+expect "R3 signature of another body" "$CODE" 401
+post "$f" "$(bin/sign-webhook "$f" wrong_secret)"
+expect "R3 wrong secret" "$CODE" 401
+expect "R3 nothing stored" "$(rows "$id")" 0
+
+echo "== R4 malformed input"
+id="evt_${RUN}_r4"; f="$(body charge-successful.json "$id" "txn_${RUN}_4")"
+post "$f" "" text/plain
+expect "R4 text/plain" "$CODE" 415
+printf '{"event":' > "$TMP/malformed.json"; post "$TMP/malformed.json"
+expect "R4 malformed JSON status" "$CODE" 400
+expect_contains "R4 malformed JSON title" "$BODY" '"title":"Malformed JSON"'
+post "$(body charge-successful.json "$id" "txn_${RUN}_4" 'del(.event_id)')"
+expect "R4 missing event_id" "$CODE" 422
+expect_contains "R4 event_id violation" "$BODY" '"propertyPath":"event_id"'
+post "$(body charge-successful.json "$id" "txn_${RUN}_4" '.data.transaction.amount.value = "299.90"')"
+expect "R4 decimal amount" "$CODE" 422
+expect_contains "R4 amount violation" "$BODY" '"propertyPath":"data.transaction.amount.value"'
+post "$(body charge-successful.json "$id" "txn_${RUN}_4" '.data.transaction.amount.currency = "zł"')"
+expect "R4 currency zł" "$CODE" 422
+expect_contains "R4 currency violation" "$BODY" '"propertyPath":"data.transaction.amount.currency"'
+expect "R4 nothing stored" "$(rows "$id")" 0
+
+echo "== R5 out-of-order"
+charge="evt_${RUN}_r5c"; intent="evt_${RUN}_r5i"
+post "$(body charge-successful.json "$charge" "txn_${RUN}_5")"
+expect "R5 charge without intent parked" "$(wait_status "$charge" parked 10)" parked
+expect "R5 parked charge not notified" "$(attempts "$charge")" 0
+post "$(body payment-intent-created.json "$intent" "txn_${RUN}_5")"
+expect "R5 intent notified" "$(wait_status "$intent" notified 10)" notified
+expect "R5 released charge notified" "$(wait_status "$charge" notified 10)" notified
+charge="evt_${RUN}_r5c2"; intent="evt_${RUN}_r5i2"
+post "$(body payment-intent-created.json "$intent" "txn_${RUN}_5b")"
+expect "R5 intent first notified" "$(wait_status "$intent" notified 10)" notified
+post "$(body charge-successful.json "$charge" "txn_${RUN}_5b")"
+expect "R5 charge after intent notified" "$(wait_status "$charge" notified 10)" notified
+refund="evt_${RUN}_r5r"
+post "$(body charge-successful.json "$refund" "txn_${RUN}_5r" '.event = "refund.created"')"
+expect "R5 refund never waits" "$(wait_status "$refund" notified 10)" notified
+
+echo "== R6 every valid event notifies"
+post "$(body payment-intent-created.json "evt_${RUN}_r6i" "txn_${RUN}_6")"
+test_mode="evt_${RUN}_r6t"
+post "$(body charge-successful.json "$test_mode" "txn_${RUN}_6" '.livemode = false')"
+expect "R6 livemode=false notified" "$(wait_status "$test_mode" notified 10)" notified
+expect_contains "R6 payload carries livemode=false" "$(docker compose logs notifier | grep "\"event_id\":\"$test_mode\"")" '"livemode":false'
+refunded="evt_${RUN}_r6r"
+post "$(body charge-successful.json "$refunded" "txn_${RUN}_6" '.event = "charge.refunded"')"
+expect "R6 charge.refunded notified" "$(wait_status "$refunded" notified 10)" notified
+
+echo "== R7 notifier 400: no retry"
+notifier 1 400
+rejected="evt_${RUN}_r7_400"
+post "$(body payment-intent-created.json "$rejected" "txn_${RUN}_7b")"
+sleep 5
+expect "R7 400 sent once" "$(attempts "$rejected")" 1
+expect_contains "R7 400 in failed transport" "$(docker compose exec -T worker php bin/console messenger:failed:show "$(sql "SELECT id FROM messenger_messages WHERE queue_name = 'failed' AND body LIKE '%$rejected%'")" -vv 2>&1)" "$rejected"
+
+echo "== R7 notifier always 503: 1 + 5 retries, then DLQ (waits ~35 s)"
+notifier 1 503
+unavailable="evt_${RUN}_r7_503"
+post "$(body payment-intent-created.json "$unavailable" "txn_${RUN}_7")"
+for _ in $(seq 60); do [[ "$(sql "SELECT COUNT(*) FROM messenger_messages WHERE queue_name = 'failed' AND body LIKE '%$unavailable%'")" == 1 ]] && break; sleep 1; done
+expect "R7 6 attempts" "$(attempts "$unavailable")" 6
+expect "R7 not notified" "$(status "$unavailable")" received
+expect_contains "R7 listed by messenger:failed:show" "$(docker compose exec -T worker php bin/console messenger:failed:show "$(sql "SELECT id FROM messenger_messages WHERE queue_name = 'failed' AND body LIKE '%$unavailable%'")" -vv 2>&1)" "$unavailable"
+
+echo "== R7 messenger:failed:retry delivers once"
+notifier 0 503
+docker compose exec -T worker php bin/console messenger:failed:retry --force >/dev/null 2>&1
+expect "R7 retried from DLQ notified" "$(wait_status "$unavailable" notified 10)" notified
+expect "R7 single successful notification" "$(docker compose logs notifier | grep "\"event_id\":\"$unavailable\"" | grep -c '\] 200 ')" 1
+
+notifier "${MOCK_FAILURE_RATE:-0.3}" 503
+echo
+if ((fails)); then echo "$fails check(s) failed"; exit 1; fi
+echo "All checks passed"
